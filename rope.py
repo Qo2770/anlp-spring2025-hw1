@@ -50,8 +50,6 @@ def apply_rotary_emb(
 
     _, seqlen, _, _ = query.shape
     device = query.device
-    # todo
-    #
     # Please refer to slide 22 in https://phontron.com/class/anlp2024/assets/slides/anlp-05-transformers.pdf
     # and Section 3 in https://arxiv.org/abs/2104.09864.
 
@@ -63,13 +61,24 @@ def apply_rotary_emb(
 
     # First, compute the trigonometric values in the second and fourth columns in
     # slide 22 (linked above).
+    theta_i = torch.pow(theta, -2*(torch.arange(head_dim/2))/head_dim)
+    theta_i_rep = torch.repeat_interleave(theta_i, 2)
+    theta_outer = torch.outer(torch.arange(seqlen), theta_i_rep)
+    col_cos = torch.cos(theta_outer).to(device)
+    col_sin = torch.sin(theta_outer).to(device)
+
+    col_cos_q = torch.repeat_interleave(col_cos, query.shape[2], dim=0).reshape(query.shape[1:])
+    col_sin_q = torch.repeat_interleave(col_sin, query.shape[2], dim=0).reshape(query.shape[1:])
+    col_cos_k = torch.repeat_interleave(col_cos, key.shape[2], dim=0).reshape(key.shape[1:])
+    col_sin_k = torch.repeat_interleave(col_sin, key.shape[2], dim=0).reshape(key.shape[1:])
 
     # Then, combine these trigonometric values with the tensors query_real, query_imag,
     # key_real, and key_imag.
+    
+    query_interleave = torch.stack([-query_imag, query_real], dim=4).reshape(query.shape)
+    key_interleave = torch.stack([-key_imag, key_real], dim=4).reshape(key.shape)
 
-    raise NotImplementedError
-
-    query_out = None
-    key_out = None
+    query_out = query * col_cos_q + query_interleave * col_sin_q
+    key_out = key * col_cos_k + key_interleave * col_sin_k
     # Return the rotary position embeddings for the query and key tensors
     return query_out, key_out
