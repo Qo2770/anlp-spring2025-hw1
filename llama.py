@@ -43,8 +43,7 @@ class RMSNorm(torch.nn.Module):
         Returns:
             torch.Tensor: The normalized tensor.
         """
-        # todo
-        raise NotImplementedError
+        return x / ( torch.sum(torch.pow(x, 2)) / x.size(dim=0) )
 
     def forward(self, x):
         """
@@ -93,8 +92,9 @@ class Attention(nn.Module):
         Make sure to use attention_dropout (self.attn_dropout) on the computed
         attention matrix before applying it to the value tensor.
         '''
-        # todo
-        raise NotImplementedError
+        attention_matrix = F.softmax(query @ key.permute(0, 1, 3, 2)/key.size(dim=3), dim=-1)
+        attention_matrix_dropout = self.attn_dropout(attention_matrix)
+        return attention_matrix_dropout @ value
 
     def forward(
         self,
@@ -196,8 +196,11 @@ class LlamaLayer(nn.Module):
         5) add a residual connection from the unnormalized self-attention output to the
            output of the feed-forward network
         '''
-        # todo
-        raise NotImplementedError
+        norm_input = self.attention_norm(x)
+        att_input = self.attention(norm_input)
+        residual_input = att_input + norm_input
+        ffn_input = self.ffn_norm(residual_input)
+        return self.feed_forward(ffn_input) + residual_input
 
 class Llama(LlamaPreTrainedModel):
     def __init__(self, config: LlamaConfig):
@@ -273,12 +276,11 @@ class Llama(LlamaPreTrainedModel):
             # forward the model to get the logits for the index in the sequence
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :] # crop to just the final time step
-            # todo
-            raise NotImplementedError
+            # TODO: Check this
 
             if temperature == 0.0:
                 # select the single most likely index
-                idx_next = None
+                idx_next = torch.argmax(logits)
             else:
                 '''
                 Perform temperature sampling with top-p (nucleus) sampling:
@@ -288,7 +290,21 @@ class Llama(LlamaPreTrainedModel):
                 4) Filter and normalize the resulting probabilities.
                 5) Sample from this scaled probability distribution.
                 '''
-                idx_next = None
+                logits_scale = logits / temperature
+                probs = F.softmax(logits_scale)
+                probs_sort_idx = torch.argsort(probs, descending=True)
+                top_p_choices = []
+                top_p_prob = 0
+                for i, logit in enumerate(logits[probs_sort_idx]):
+                    if top_p_prob + probs[probs_sort_idx[i]] > top_p:
+                        if len(top_p_choices) == 0:
+                            top_p_prob += probs[probs_sort_idx[i]]
+                            top_p_choices.append(probs_sort_idx[i])
+                        break
+                    top_p_prob += probs[probs_sort_idx[i]]
+                    top_p_choices.append(probs_sort_idx[i])
+                res_softmax = F.softmax(logits_scale[top_p_choices])
+                idx_next = torch.multinomial(res_softmax, 1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
@@ -297,14 +313,17 @@ class Llama(LlamaPreTrainedModel):
 
 def load_pretrained(checkpoint):
   device = 'cuda' if torch.cuda.is_available() else 'cpu' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
+  device = 'mps' if torch.backends.mps.is_available() and torch.backends.mps.is_built() else device
   #dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
   dtype = "float32"
 
   torch.backends.cuda.matmul.allow_tf32 = True # allow tf32 on matmul
   torch.backends.cudnn.allow_tf32 = True # allow tf32 on cudnn
   device_type = 'cuda' if 'cuda' in device else 'cpu' # for later use in torch.autocast
+  device_type = 'mps' if 'mps' in device else device_type # for later use in torch.autocast
   ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
-  ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+  ctx = nullcontext() if device_type == 'cpu' or device_type == 'mps' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
+
 
   # init from a model saved in a specific directory
   checkpoint_dict = torch.load(checkpoint, map_location=device)
