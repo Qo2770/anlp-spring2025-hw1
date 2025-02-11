@@ -3,6 +3,8 @@ from typing import Callable, Iterable, Tuple
 import torch
 from torch.optim import Optimizer
 
+from math import sqrt, pow
+
 
 class AdamW(Optimizer):
     def __init__(
@@ -33,9 +35,8 @@ class AdamW(Optimizer):
 
         for group in self.param_groups:
 
-            # TODO: Clip gradients if max_grad_norm is set
             if group['max_grad_norm'] is not None:
-                raise NotImplementedError()
+                torch.nn.utils.clip_grad_norm_(group["params"], group['max_grad_norm'])
             
             for p in group["params"]:
                 if p.grad is None:
@@ -44,23 +45,38 @@ class AdamW(Optimizer):
                 if grad.is_sparse:
                     raise RuntimeError("Adam does not support sparse gradients, please consider SparseAdam instead")
 
-                raise NotImplementedError()
-
                 # State should be stored in this dictionary
                 state = self.state[p]
+                if 't' not in state:
+                    state['t'] = 0
+                state['t'] += 1
+                t = state['t']
 
-                # TODO: Access hyperparameters from the `group` dictionary
+                if 'm' not in state or 'v' not in state:
+                    state['m'] = torch.zeros_like(grad)
+                    state['v'] = torch.zeros_like(grad)
+
+                assert len(self.defaults["betas"]) == 2
+                beta_one, beta_two = self.defaults["betas"]
+
+                # Access hyperparameters from the `group` dictionary
                 alpha = group["lr"]
 
-                # TODO: Update first and second moments of the gradients
+                # Update first and second moments of the gradients
+                state['m'].lerp_(grad, 1-beta_one)
+                state['v'].lerp_(grad.square(), 1-beta_two)
 
-                # TODO: Bias correction
+                # Bias correction
                 # Please note that we are using the "efficient version" given in
                 # https://arxiv.org/abs/1412.6980
+                alpha_t = alpha * sqrt(1-pow(beta_two, t))/(1-pow(beta_one, t))
 
-                # TODO: Update parameters
+                # Update parameters
+                p.data.addcdiv_(state['m'], state['v'].sqrt()+self.defaults['eps'], value=-alpha_t)
 
-                # TODO: Add weight decay after the main gradient-based updates.
-                # Please note that the learning rate should be incorporated into this update.
+                # Add weight decay after the main gradient-based updates.
+                p.data.sub_(p.data, alpha=(alpha*self.defaults['weight_decay']))
+
+                self.state[p] = state
 
         return loss
