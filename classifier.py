@@ -31,28 +31,30 @@ class LlamaZeroShotClassifier(torch.nn.Module):
 		return label_probabilities
 
 class LlamaEmbeddingClassifier(torch.nn.Module):
-	def __init__(self, config):
-		super(LlamaEmbeddingClassifier, self).__init__()
-		self.num_labels = config.num_labels
-		self.llama = load_pretrained(config.pretrained_model_path)
-		# If we use pretrain mode, we freeze Llama parameters.
-		for param in self.llama.parameters():
-			if config.option == 'pretrain':
-				param.requires_grad = False
-			elif config.option == 'finetune':
-				param.requires_grad = True
+    def __init__(self, config):
+        super(LlamaEmbeddingClassifier, self).__init__()
+        self.num_labels = config.num_labels
+        self.llama = load_pretrained(config.pretrained_model_path)
+        # If we use pretrain mode, we freeze Llama parameters.
+        for param in self.llama.parameters():
+            if config.option == 'pretrain':
+                param.requires_grad = False
+            elif config.option == 'finetune':
+                param.requires_grad = True
 
-		self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
-		self.classifier_head = torch.nn.Linear(self.llama.config.dim, self.num_labels)
+        self.dropout = torch.nn.Dropout(config.hidden_dropout_prob)
+        self.classifier_head = torch.nn.Linear(self.llama.config.dim, self.num_labels)
 
-	def forward(self, input_ids):
-		'''
-		1) Find the hidden state after the final token of the input sequence
-		2) Apply dropout (self.dropout) to the hidden state at training time to mitigate
-		   overfitting.
-		2) Pass this through the classifier head (self.classifier_head), which will return
-		   logits (unnormalized probabilities) over all classes.
-		3) Take the log-softmax of the logits and return log-probabilities over all classes.
-		'''
-		# todo
-		raise NotImplementedError
+    def forward(self, input_ids):
+        """
+        1) Find the hidden state after the final token of the input sequence
+        2) Apply dropout (self.dropout) to the hidden state at training time to mitigate
+            overfitting.
+        2) Pass this through the classifier head (self.classifier_head), which will return
+            logits (unnormalized probabilities) over all classes.
+        3) Take the log-softmax of the logits and return log-probabilities over all classes.
+        """	
+        _, h = self.llama(input_ids)
+        h_drop = self.dropout(h)
+        class_out = self.clasifier_head(h_drop)
+        return F.log_softmax(class_out, dim=-1)
