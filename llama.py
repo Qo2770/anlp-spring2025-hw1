@@ -291,17 +291,12 @@ class Llama(LlamaPreTrainedModel):
                 5) Sample from this scaled probability distribution.
                 '''
                 logits_scale = torch.squeeze(logits / temperature)
-                probs = F.softmax(logits_scale, dim=0)
+                probs = F.softmax(logits_scale, dim=-1)
                 probs_sort_idx = torch.argsort(probs, descending=True)
-                top_p_choices = []
-                top_p_prob = 0
-                for i, logit in enumerate(logits[0, probs_sort_idx]):
-                    if top_p_prob + probs[probs_sort_idx[i]] > top_p and len(top_p_choices) > 0:
-                        break
-                    top_p_prob += probs[probs_sort_idx[i]]
-                    top_p_choices.append(probs_sort_idx[i].item())
-                res_softmax = F.softmax(logits_scale[top_p_choices], dim=0)
-                idx_next = torch.multinomial(res_softmax, 1).reshape(1, -1)
+                mask = torch.cumsum(probs[probs_sort_idx], dim=-1) > top_p
+                top_p_choices = probs_sort_idx[:max(mask.max(0, True).indices.item(), 1)]
+                res_softmax = F.softmax(logits_scale[top_p_choices], dim=-1)
+                idx_next = probs_sort_idx[torch.multinomial(res_softmax, 1)].reshape(1, -1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 
