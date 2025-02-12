@@ -43,7 +43,7 @@ class RMSNorm(torch.nn.Module):
         Returns:
             torch.Tensor: The normalized tensor.
         """
-        return x / ( torch.sum(torch.pow(x, 2)) / x.size(dim=0) )
+        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
 
     def forward(self, x):
         """
@@ -92,7 +92,7 @@ class Attention(nn.Module):
         Make sure to use attention_dropout (self.attn_dropout) on the computed
         attention matrix before applying it to the value tensor.
         '''
-        attention_matrix = F.softmax(query @ key.permute(0, 1, 3, 2)/key.size(dim=3), dim=-1)
+        attention_matrix = F.softmax(query @ key.permute(0, 1, 3, 2)/math.sqrt(key.size(dim=3)), dim=-1)
         attention_matrix_dropout = self.attn_dropout(attention_matrix)
         return attention_matrix_dropout @ value
 
@@ -198,7 +198,7 @@ class LlamaLayer(nn.Module):
         '''
         norm_input = self.attention_norm(x)
         att_input = self.attention(norm_input)
-        residual_input = att_input + norm_input
+        residual_input = att_input + x
         ffn_input = self.ffn_norm(residual_input)
         return self.feed_forward(ffn_input) + residual_input
 
@@ -280,7 +280,7 @@ class Llama(LlamaPreTrainedModel):
 
             if temperature == 0.0:
                 # select the single most likely index
-                idx_next = torch.argmax(logits)
+                idx_next = torch.argmax(logits).reshape(1, 1)
             else:
                 '''
                 Perform temperature sampling with top-p (nucleus) sampling:
@@ -290,21 +290,18 @@ class Llama(LlamaPreTrainedModel):
                 4) Filter and normalize the resulting probabilities.
                 5) Sample from this scaled probability distribution.
                 '''
-                logits_scale = logits / temperature
-                probs = F.softmax(logits_scale)
+                logits_scale = torch.squeeze(logits / temperature)
+                probs = F.softmax(logits_scale, dim=0)
                 probs_sort_idx = torch.argsort(probs, descending=True)
                 top_p_choices = []
                 top_p_prob = 0
-                for i, logit in enumerate(logits[probs_sort_idx]):
-                    if top_p_prob + probs[probs_sort_idx[i]] > top_p:
-                        if len(top_p_choices) == 0:
-                            top_p_prob += probs[probs_sort_idx[i]]
-                            top_p_choices.append(probs_sort_idx[i])
+                for i, logit in enumerate(logits[0, probs_sort_idx]):
+                    if top_p_prob + probs[probs_sort_idx[i]] > top_p and len(top_p_choices) > 0:
                         break
                     top_p_prob += probs[probs_sort_idx[i]]
-                    top_p_choices.append(probs_sort_idx[i])
-                res_softmax = F.softmax(logits_scale[top_p_choices])
-                idx_next = torch.multinomial(res_softmax, 1)
+                    top_p_choices.append(probs_sort_idx[i].item())
+                res_softmax = F.softmax(logits_scale[top_p_choices], dim=0)
+                idx_next = torch.multinomial(res_softmax, 1).reshape(1, -1)
             # append sampled index to the running sequence and continue
             idx = torch.cat((idx, idx_next), dim=1)
 

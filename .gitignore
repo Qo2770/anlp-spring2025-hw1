@@ -1,5 +1,8 @@
 stories42M.pt
 
+*.txt
+*.pt
+
 *.png
 *.mat
 *.zip
