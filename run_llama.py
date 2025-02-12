@@ -131,95 +131,97 @@ def save_model(model, optimizer, args, config, filepath):
 	print(f"save the model to {filepath}")
 
 def train(args):
-	device = torch.device('cuda') if args.use_gpu else torch.device('mps')
-	#### Load data
-	# create the data and its corresponding datasets and dataloader
-	tokenizer = Tokenizer(args.max_sentence_len)
-	train_data, num_labels = create_data(args.train, tokenizer, 'train')
-	dev_data = create_data(args.dev, tokenizer, 'valid')
+    device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+    device = torch.device('mps') if torch.backends.mps.is_available() and torch.backends.mps.is_built() else device
+    #### Load data
+    # create the data and its corresponding datasets and dataloader
+    tokenizer = Tokenizer(args.max_sentence_len)
+    train_data, num_labels = create_data(args.train, tokenizer, 'train')
+    dev_data = create_data(args.dev, tokenizer, 'valid')
 
-	train_dataset = LlamaDataset(train_data, args)
-	dev_dataset = LlamaDataset(dev_data, args)
+    train_dataset = LlamaDataset(train_data, args)
+    dev_dataset = LlamaDataset(dev_data, args)
 
-	train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=args.batch_size,
-								  collate_fn=train_dataset.collate_fn)
-	dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.batch_size,
-								collate_fn=dev_dataset.collate_fn)
+    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=args.batch_size,
+                                    collate_fn=train_dataset.collate_fn)
+    dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.batch_size,
+                                collate_fn=dev_dataset.collate_fn)
 
-	#### Init model
-	config = {'hidden_dropout_prob': args.hidden_dropout_prob,
-			  'pretrained_model_path': args.pretrained_model_path,
-			  'num_labels': num_labels,
-			  'data_dir': '.',
-			  'option': args.option}
+    #### Init model
+    config = {'hidden_dropout_prob': args.hidden_dropout_prob,
+                'pretrained_model_path': args.pretrained_model_path,
+                'num_labels': num_labels,
+                'data_dir': '.',
+                'option': args.option}
 
-	config = SimpleNamespace(**config)
+    config = SimpleNamespace(**config)
 
-	# initialize the Senetence Classification Model
-	model = LlamaEmbeddingClassifier(config)
-	model = model.to(device)
+    # initialize the Senetence Classification Model
+    model = LlamaEmbeddingClassifier(config)
+    model = model.to(device)
 
-	lr = args.lr
-	## specify the optimizer
-	optimizer = AdamW(model.parameters(), lr=lr)
-	best_dev_acc = 0
+    lr = args.lr
+    ## specify the optimizer
+    optimizer = AdamW(model.parameters(), lr=lr)
+    best_dev_acc = 0
 
-	## run for the specified number of epochs
-	for epoch in tqdm(range(args.epochs)):
-		model.train()
-		train_loss = 0
-		num_batches = 0
-		for step, batch in enumerate(tqdm(train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)):
-			b_ids, b_labels, b_sents = batch['token_ids'], batch['labels'], batch['sents']
+    ## run for the specified number of epochs
+    for epoch in tqdm(range(args.epochs)):
+        model.train()
+        train_loss = 0
+        num_batches = 0
+        for step, batch in enumerate(tqdm(train_dataloader, desc=f'train-{epoch}', disable=TQDM_DISABLE)):
+            b_ids, b_labels, b_sents = batch['token_ids'], batch['labels'], batch['sents']
 
-			b_ids = b_ids.to(device)
-			b_labels = b_labels.to(device)
+            b_ids = b_ids.to(device)
+            b_labels = b_labels.to(device)
 
-			optimizer.zero_grad()
-			logits = model(b_ids)
-			loss = F.nll_loss(logits, b_labels.view(-1), reduction='sum') / args.batch_size
+            optimizer.zero_grad()
+            logits = model(b_ids)
+            loss = F.nll_loss(logits, b_labels.view(-1), reduction='sum') / args.batch_size
 
-			loss.backward()
-			optimizer.step()
+            loss.backward()
+            optimizer.step()
 
-			train_loss += loss.item()
-			num_batches += 1
+            train_loss += loss.item()
+            num_batches += 1
 
-		train_loss = train_loss / (num_batches)
+        train_loss = train_loss / (num_batches)
 
-		train_acc, train_f1, *_ = model_eval(train_dataloader, model, device)
-		dev_acc, dev_f1, *_ = model_eval(dev_dataloader, model, device)
+        train_acc, train_f1, *_ = model_eval(train_dataloader, model, device)
+        dev_acc, dev_f1, *_ = model_eval(dev_dataloader, model, device)
 
-		if dev_acc > best_dev_acc:
-			best_dev_acc = dev_acc
-			save_model(model, optimizer, args, config, args.filepath)
+        if dev_acc > best_dev_acc:
+            best_dev_acc = dev_acc
+            save_model(model, optimizer, args, config, args.filepath)
 
-		print(f"epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
+        print(f"epoch {epoch}: train loss :: {train_loss :.3f}, train acc :: {train_acc :.3f}, dev acc :: {dev_acc :.3f}")
 
 def generate_sentence(args, prefix, outfile, max_new_tokens = 75, temperature = 0.0):
-	with torch.no_grad():
-		device = torch.device('cuda') if args.use_gpu else torch.device('mps')
-		ctx = torch.amp.autocast(device_type="cuda", dtype=torch.float32) if args.use_gpu else nullcontext()
-		llama = load_pretrained(args.pretrained_model_path)
-		llama = llama.to(device)
-		print(f"load model from {args.pretrained_model_path}")
-		enc = Tokenizer(args.max_sentence_len)
+    with torch.no_grad():
+        device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+        device = torch.device('mps') if torch.backends.mps.is_available() and torch.backends.mps.is_built() else device
+        ctx = torch.amp.autocast(device_type="cuda", dtype=torch.float32) if args.use_gpu else nullcontext()
+        llama = load_pretrained(args.pretrained_model_path)
+        llama = llama.to(device)
+        print(f"load model from {args.pretrained_model_path}")
+        enc = Tokenizer(args.max_sentence_len)
 
-		start_ids = enc.encode(prefix, bos=True, eos=False)
-		x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
+        start_ids = enc.encode(prefix, bos=True, eos=False)
+        x = (torch.tensor(start_ids, dtype=torch.long, device=device)[None, ...])
 
-		# run generation
-		with torch.no_grad():
-			with ctx:
-				y = llama.generate(x, max_new_tokens, temperature=temperature)
-				sentence = enc.decode(y[0].tolist())
-				print(f"Temperature is {temperature}")
-				print(sentence)
-				print('---------------')
-				writer = open(outfile, 'w')
-				writer.write(sentence)
-				print(f"Wrote generated sentence to {outfile}.")
-				writer.close()
+        # run generation
+        with torch.no_grad():
+            with ctx:
+                y = llama.generate(x, max_new_tokens, temperature=temperature)
+                sentence = enc.decode(y[0].tolist())
+                print(f"Temperature is {temperature}")
+                print(sentence)
+                print('---------------')
+                writer = open(outfile, 'w')
+                writer.write(sentence)
+                print(f"Wrote generated sentence to {outfile}.")
+                writer.close()
 
 def write_predictions_to_file(split: str, outfile: str, acc: float, pred: list[str], sents: list[str]):
 	with open(outfile, "w+") as f:
@@ -228,74 +230,76 @@ def write_predictions_to_file(split: str, outfile: str, acc: float, pred: list[s
 			f.write(f"{p} ||| {s}\n")
 
 def test_with_prompting(args):
-	assert args.dev_out.endswith("dev-prompting-output.txt"), 'For saving prompting results, please set the dev_out argument as "<dataset>-dev-prompting-output.txt"'
-	assert args.test_out.endswith("test-prompting-output.txt"), 'For saving prompting results, please set the test_out argument as "<dataset>-test-prompting-output.txt"'
+    assert args.dev_out.endswith("dev-prompting-output.txt"), 'For saving prompting results, please set the dev_out argument as "<dataset>-dev-prompting-output.txt"'
+    assert args.test_out.endswith("test-prompting-output.txt"), 'For saving prompting results, please set the test_out argument as "<dataset>-test-prompting-output.txt"'
 
-	with torch.no_grad():
+    with torch.no_grad():
 
-		device = torch.device('cuda') if args.use_gpu else torch.device('mps')
-		#### Load data
-		# create the data and its corresponding datasets and dataloader
-		tokenizer = Tokenizer(args.max_sentence_len)
-		label_names = json.load(open(args.label_names, 'r'))
-		_, num_labels = create_data(args.train, tokenizer, 'train')
+        device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+        device = torch.device('mps') if torch.backends.mps.is_available() and torch.backends.mps.is_built() else device
+        #### Load data
+        # create the data and its corresponding datasets and dataloader
+        tokenizer = Tokenizer(args.max_sentence_len)
+        label_names = json.load(open(args.label_names, 'r'))
+        _, num_labels = create_data(args.train, tokenizer, 'train')
 
-		#### Init model
-		config = {'pretrained_model_path': args.pretrained_model_path,
-				'label_names': label_names,
-				'num_labels': num_labels,
-				'data_dir': '.',
-				'option': args.option}
+        #### Init model
+        config = {'pretrained_model_path': args.pretrained_model_path,
+                'label_names': label_names,
+                'num_labels': num_labels,
+                'data_dir': '.',
+                'option': args.option}
 
-		config = SimpleNamespace(**config)
+        config = SimpleNamespace(**config)
 
-		if len(label_names) == 2:
-			label_name_str = " or ".join(label_names)
-		else:
-			label_name_str = ", ".join(label_names[:-1]) + ", or " + label_names[-1]
-		prompt_suffix=f"Is this movie {label_name_str}? This movie is "
-		model = LlamaZeroShotClassifier(config, tokenizer, label_names)
-		model = model.to(device)
+        if len(label_names) == 2:
+            label_name_str = " or ".join(label_names)
+        else:
+            label_name_str = ", ".join(label_names[:-1]) + ", or " + label_names[-1]
+        prompt_suffix=f"Is this movie {label_name_str}? This movie is "
+        model = LlamaZeroShotClassifier(config, tokenizer, label_names)
+        model = model.to(device)
 
-		dev_data = create_data(args.dev, tokenizer, 'valid', eos=False, prompt_suffix=prompt_suffix)
-		dev_dataset = LlamaDataset(dev_data, args, eos=False)
-		dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=dev_dataset.collate_fn)
+        dev_data = create_data(args.dev, tokenizer, 'valid', eos=False, prompt_suffix=prompt_suffix)
+        dev_dataset = LlamaDataset(dev_data, args, eos=False)
+        dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=dev_dataset.collate_fn)
 
-		test_data = create_data(args.test, tokenizer, 'test', eos=False, prompt_suffix=prompt_suffix)
-		test_dataset = LlamaDataset(test_data, args, eos=False)
-		test_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=test_dataset.collate_fn)
+        test_data = create_data(args.test, tokenizer, 'test', eos=False, prompt_suffix=prompt_suffix)
+        test_dataset = LlamaDataset(test_data, args, eos=False)
+        test_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=test_dataset.collate_fn)
 
-		dev_acc, dev_f1, dev_pred, dev_true, dev_sents = model_eval(dev_dataloader, model, device)
-		test_acc, test_f1, test_pred, test_true, test_sents = model_eval(test_dataloader, model, device)
+        dev_acc, dev_f1, dev_pred, dev_true, dev_sents = model_eval(dev_dataloader, model, device)
+        test_acc, test_f1, test_pred, test_true, test_sents = model_eval(test_dataloader, model, device)
 
-		write_predictions_to_file("dev", args.dev_out, dev_acc, dev_pred, dev_sents)
-		write_predictions_to_file("test", args.test_out, test_acc, test_pred, test_sents)
+        write_predictions_to_file("dev", args.dev_out, dev_acc, dev_pred, dev_sents)
+        write_predictions_to_file("test", args.test_out, test_acc, test_pred, test_sents)
 
 def test(args):
-	assert args.dev_out.endswith("dev-finetuning-output.txt"), 'For saving finetuning results, please set the dev_out argument as "<dataset>-dev-finetuning-output.txt"'
-	assert args.test_out.endswith("test-finetuning-output.txt"), 'For saving finetuning results, please set the test_out argument as "<dataset>-test-finetuning-output.txt"'
-	with torch.no_grad():
-		device = torch.device('cuda') if args.use_gpu else torch.device('mps')
-		saved = torch.load(args.filepath)
-		config = saved['model_config']
-		model = LlamaEmbeddingClassifier(config)
-		model.load_state_dict(saved['model'])
-		model = model.to(device)
-		print(f"load model from {args.filepath}")
-		tokenizer = Tokenizer(args.max_sentence_len)
-		dev_data = create_data(args.dev, tokenizer, 'valid')
-		dev_dataset = LlamaDataset(dev_data, args)
-		dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=dev_dataset.collate_fn)
+    assert args.dev_out.endswith("dev-finetuning-output.txt"), 'For saving finetuning results, please set the dev_out argument as "<dataset>-dev-finetuning-output.txt"'
+    assert args.test_out.endswith("test-finetuning-output.txt"), 'For saving finetuning results, please set the test_out argument as "<dataset>-test-finetuning-output.txt"'
+    with torch.no_grad():
+        device = torch.device('cuda') if args.use_gpu else torch.device('cpu')
+        device = torch.device('mps') if torch.backends.mps.is_available() and torch.backends.mps.is_built() else device
+        saved = torch.load(args.filepath)
+        config = saved['model_config']
+        model = LlamaEmbeddingClassifier(config)
+        model.load_state_dict(saved['model'])
+        model = model.to(device)
+        print(f"load model from {args.filepath}")
+        tokenizer = Tokenizer(args.max_sentence_len)
+        dev_data = create_data(args.dev, tokenizer, 'valid')
+        dev_dataset = LlamaDataset(dev_data, args)
+        dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=dev_dataset.collate_fn)
 
-		test_data = create_data(args.test, tokenizer, 'test')
-		test_dataset = LlamaDataset(test_data, args)
-		test_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=test_dataset.collate_fn)
+        test_data = create_data(args.test, tokenizer, 'test')
+        test_dataset = LlamaDataset(test_data, args)
+        test_dataloader = DataLoader(test_dataset, shuffle=False, batch_size=args.batch_size, collate_fn=test_dataset.collate_fn)
 
-		dev_acc, dev_f1, dev_pred, dev_true, dev_sents = model_eval(dev_dataloader, model, device)
-		test_acc, test_f1, test_pred, test_true, test_sents = model_eval(test_dataloader, model, device)
-	
-		write_predictions_to_file("dev", args.dev_out, dev_acc, dev_pred, dev_sents)
-		write_predictions_to_file("test", args.test_out, test_acc, test_pred, test_sents)
+        dev_acc, dev_f1, dev_pred, dev_true, dev_sents = model_eval(dev_dataloader, model, device)
+        test_acc, test_f1, test_pred, test_true, test_sents = model_eval(test_dataloader, model, device)
+
+        write_predictions_to_file("dev", args.dev_out, dev_acc, dev_pred, dev_sents)
+        write_predictions_to_file("test", args.test_out, test_acc, test_pred, test_sents)
 
 def get_args():
 	parser = argparse.ArgumentParser()
